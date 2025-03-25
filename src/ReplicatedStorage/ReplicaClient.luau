@@ -472,8 +472,8 @@ function Replica:TableInsert(path: {string}, value: any, index: number?): number
 		ConnectionFire(connection, "TableInsert", path, value, index)
 	end
 	
-	return index
-	
+	return (index :: number)
+
 end
 
 function Replica:TableRemove(path: {string}, index: number): any
@@ -634,7 +634,7 @@ local function CreationScan(nested_creation, iterator, parent_id)
 	end
 end
 
-local function BreadthCreationSort(creation: {}, root_id: number?, iterator: (Id: number, SelfCreation: table) -> ())
+local function BreadthCreationSort(creation: {}, root_id: number?, iterator: (Id: number, SelfCreation: {}) -> ())
 	
 	-- self_creation = {token, tags, data, parent_id, write_module}
 	local top_creation = {} -- {Id = id, SelfCreation = self_creation}, ...

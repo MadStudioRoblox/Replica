@@ -86,7 +86,7 @@ end
 local Remote = {}
 Remote.__index = Remote
 
-function Remote.New(name: string, is_unreliable: boolean): RemoteEvent
+function Remote.New(name: string, is_unreliable: boolean?): RemoteEvent
 	
 	if type(name) ~= "string" then
 		error(`[{script.Name}]: name must be a string`)
@@ -162,7 +162,7 @@ function Remote.New(name: string, is_unreliable: boolean): RemoteEvent
 			end
 
 			self.RemoteEvent = remote
-			connections = nil
+			connections = nil :: any
 			
 		end
 		
