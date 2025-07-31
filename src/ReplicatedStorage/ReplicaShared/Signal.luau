@@ -15,8 +15,6 @@ MAD STUDIO
 		Signal:Connect(listener) --> [Connection] listener(...)
 			listener              [function]
 			
-		Signal:GetListenerCount() --> [number]
-			
 		Signal:Fire(...)
 		
 		Signal:Wait()
@@ -32,7 +30,7 @@ MAD STUDIO
 
 ----- Private -----
 
-local FreeRunnerThread
+local FreeRunnerThread: thread?
 
 --[[
 	Yield-safe coroutine reusing by stravant;
@@ -58,18 +56,17 @@ end
 
 ----- Public -----
 
---[[
 export type Connection = {
 	Disconnect: (self: Connection) -> (),
+	IsConnected: boolean,
 }
 
-export type Signal = {
-	Connect: (self: Signal, listener: (...any) -> ()) -> (Connection),
-	GetListenerCount: (self: Signal) -> (number),
-	Fire: (self: Signal, ...any) -> (),
-	FireUntil: (self: Signal, continue_callback: () -> boolean, ...any) -> (),
+export type Signal<T...> = {
+	Connect: (self: Signal<T...>, fn: (T...) -> ()) -> Connection,
+	Wait: (self: Signal<T...>) -> T...,
+	Fire: (self: Signal<T...>, T...) -> (),
+	FireUntil: (self: Signal<T...>, continue_callback: () -> boolean, T...) -> (),
 }
---]]
 
 local Connection = {}
 Connection.__index = Connection
@@ -79,13 +76,12 @@ Signal.__index = Signal
 
 function Connection:Disconnect()
 
-	if self.is_connected == false then
+	if self.IsConnected == false then
 		return
 	end
 	
 	local signal = self.signal
-	self.is_connected = false
-	signal.listener_count -= 1
+	self.IsConnected = false
 	
 	if signal.head == self then
 		signal.head = self.next
@@ -101,11 +97,10 @@ function Connection:Disconnect()
 
 end
 
-function Signal.New()
+function Signal.New<T...>(): Signal<T...>
 
 	local self = {
 		head = nil,
-		listener_count = 0,
 	}
 	setmetatable(self, Signal)
 
@@ -123,29 +118,24 @@ function Signal:Connect(listener: (...any) -> ())
 		listener = listener,
 		signal = self,
 		next = self.head,
-		is_connected = true,
+		IsConnected = true,
 	}
 	setmetatable(connection, Connection)
 
 	self.head = connection
-	self.listener_count += 1
 
 	return connection
 
 end
 
-function Signal:GetListenerCount(): number
-	return self.listener_count
-end
-
 function Signal:Fire(...)
 	local item = self.head
 	while item ~= nil do
-		if item.is_connected == true then
+		if item.IsConnected == true then
 			if not FreeRunnerThread then
 				FreeRunnerThread = coroutine.create(RunEventHandlerInFreeThread)
 			end
-			task.spawn(FreeRunnerThread, item.listener, ...)
+			task.spawn(FreeRunnerThread :: thread, item.listener, ...)
 		end
 		item = item.next
 	end
@@ -178,7 +168,7 @@ function Signal:FireUntil(continue_callback: () -> boolean, ...)
 	
 	task.spawn(function()
 		for _, check_item in ipairs(items) do
-			if check_item.is_connected == true then
+			if check_item.IsConnected == true then
 				check_item.listener(table.unpack(args))
 				if continue_callback() ~= true then
 					return

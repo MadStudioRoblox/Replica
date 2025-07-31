@@ -9,62 +9,59 @@ MAD STUDIO
 			
 	Members:
 	
-		Replica.IsReady        [bool]
-		Replica.OnLocalReady   [Signal] ()
+		Replica.IsReady:      boolean
+		Replica.OnLocalReady: Signal<>
 	
 	Functions:
 	
 		Replica.RequestData() -- Requests the server to start sending replica data
 		
-		Replica.OnNew(token, listener) --> [Connection]
-			token      [string]
-			listener   [function] (replica)
-		
-		Replica.FromId(id) --> [Replica] or nil
+		Replica.OnNew(token: string, listener: (replica) -> ()): Signal.Connection
+		Replica.FromId(id: number): Replica?
 		
 	Members [Replica]:
 	
-		Replica.Tags             [table] Secondary Replica identifiers
-		Replica.Data             [table] (Read only) Table which is replicated
+		Replica.Tags:          {} -- Secondary Replica identifiers
+		Replica.Data:          {} -- Table which is replicated; Can only be written to through setter methods server-side
 		
-		Replica.Id               [number] Unique identifier
-		Replica.Token            [string] Primary Replica identifier
+		Replica.Id:            number -- Unique identifier
+		Replica.Token:         string -- Primary Replica identifier
 		
-		Replica.Parent           [Replica] or nil
-		Replica.Children         [table]: {[replica] = true, ...}
+		Replica.Parent:        Replica?
+		Replica.Children:      {[Replica]: true}
 		
-		Replica.BoundInstance    [Instance] or nil -- WARNING: Will be set to nil after destruction
+		Replica.BoundInstance: Instance? -- WARNING: Will be set to nil after destruction
 		
-		Replica.OnClientEvent    [Signal] (...)
+		Replica.OnClientEvent: Signal<...>
 		
-		Replica.Maid             [Maid]
+		Replica.Maid:          Maid
 	
 	Methods [Replica]:
 	
-		-- [path]: {"Players", 2312310, "Health"} -- A path defines a key branch within Replica.Data
+		-- (EXAMPLE) path: {"Players", "2312310", "Health"} -- A path defines a key branch within Replica.Data
 		-- Listeners are called after Replica.Data mutation.
 	
-		Replica:OnSet(path, listener) --> [Connection] -- (Only for :Set(); For :SetValues() you can use :OnChange())
-			listener   [function] (new_value, old_value)
+		Replica:OnSet(path: {string | number}, listener): Signal.Connection -- (Only for :Set(); For :SetValues() you can use :OnChange())
+			listener: (new_value: any, old_value: any) -> ()
 			
-		Replica:OnWrite(function_name, listener) --> [Connection]
-			listener   [function] (...)
+		Replica:OnWrite(function_name: string, listener): Signal.Connection
+			listener: (...) -> ()
 			
-		Replica:OnChange(listener) --> [Connection]
-			listener   [function] (action, path, param1, param2?)
+		Replica:OnChange(listener): Signal.Connection
+			listener: (action: string, path: {string | number}, param1: any, param2: any?) -> ()
 				-- ("Set",         path, value, old_value)
 				-- ("SetValues",   path, values)
 				-- ("TableInsert", path, value, index)
 				-- ("TableRemove", path, value, index)
 				
-		Replica:GetChild(token [string]) --> [Replica] or nil -- Searches for a child replica with given token name
+		Replica:GetChild(token: string): Replica? -- Searches for a child replica with given token name
 		
 		Replica:FireServer(...) -- Fire a signal to server-side listeners for this specific Replica; Must be subscribed
 		Replica:UFireServer(...) -- Same as "Replica:FireServer()", but using UnreliableRemoteEvent
 		
-		Replica:Identify() --> [string] -- Debug
+		Replica:Identify(): string -- Debug
 
-		Replica:IsActive() --> [bool]
+		Replica:IsActive(): boolean
 	
 --]]
 
@@ -88,12 +85,12 @@ local Players = game:GetService("Players")
 
 local DataRequestStarted = false
 
-local TokenReplicas = {} -- [token] = {[replica] = true, ...}
-local Replicas = {} -- [id] = Replica, ...
-local BindReplicas = {} -- [id] = Replica, ... -- Unannounced Replicas waiting for their binds to stream in
-local BindInstances = {} -- [id] = Instance, ...
+local TokenReplicas = {} -- {[token]: {[Replica]: true}}
+local Replicas = {} -- {[id]: Replica}
+local BindReplicas = {} -- {[id]: Replica} -- Unannounced Replicas waiting for their binds to stream in
+local BindInstances = {} -- {[id]: Instance}
 
-local NewReplicaListeners = {} -- [token] = {[connection] = true, ...}
+local NewReplicaListeners = {} -- {[token]: Signal}
 
 local RemoteRequestData = Remote.New("ReplicaRequestData") -- Fired client-side when the client loads for the first time
 
@@ -148,10 +145,6 @@ end
 
 ----- Public -----
 
-export type Connection = {
-	Disconnect: (self: Connection) -> (),
-}
-
 export type Replica = {
 	Tags: {[any]: any},
 	Data: {[any]: any},
@@ -163,18 +156,15 @@ export type Replica = {
 	OnClientEvent: {Connect: (self: any, listener: (...any) -> ()) -> ({Disconnect: (self: any) -> ()})},
 	Maid: typeof(Maid),
 
-	OnSet: (self: any, path: {}, listener: () -> ()) -> (Connection),
-	OnWrite: (self: any, function_name: string, listener: (...any) -> ()) -> (Connection),
-	OnChange: (self: any, listener: (action: "Set" | "SetValues" | "TableInsert" | "TableRemove", path: {any}, param1: any, param2: any?) -> ()) -> (Connection),
+	OnSet: (self: any, path: {}, listener: () -> ()) -> (Signal.Connection),
+	OnWrite: (self: any, function_name: string, listener: (...any) -> ()) -> (Signal.Connection),
+	OnChange: (self: any, listener: (action: "Set" | "SetValues" | "TableInsert" | "TableRemove", path: {any}, param1: any, param2: any?) -> ()) -> (Signal.Connection),
 	GetChild: (self: any, token: string) -> (Replica?),
 	FireServer: (self: any, ...any) -> (),
 	UFireServer: (self: any, ...any) -> (),
 	Identify: (self: any) -> (string),
 	IsActive: (self: any) -> (boolean),
 }
-
-local Connection = {}
-Connection.__index = Connection
 
 local FreeRunnerThread
 
@@ -198,30 +188,6 @@ local function RunEventHandlerInFreeThread(...)
 	while true do
 		AcquireRunnerThreadAndCallEventHandler(coroutine.yield())
 	end
-end
-
-function ConnectionNew(t, fn)
-
-	local self = setmetatable({
-		t = t,
-		fn = fn,
-	}, Connection)
-
-	t[self] = true
-
-	return self
-
-end
-
-function ConnectionFire(self, ...)
-	if not FreeRunnerThread then
-		FreeRunnerThread = coroutine.create(RunEventHandlerInFreeThread)
-	end
-	task.spawn(FreeRunnerThread, self.fn, ...)
-end
-
-function Connection:Disconnect()
-	self.t[self] = nil
 end
 
 local Replica = {
@@ -255,9 +221,9 @@ local function ReplicaNew(id: number, self_creation: {}) -- self_creation = {tok
 
 		write_lib = write_lib,
 		
-		set_listeners = {}, -- [key] = {[connection] = true, ...}, ...
-		write_listeners = {}, -- [key] = {[connection] = true, ...}, ...
-		changed_listeners = {}, -- [connection] = true, ...
+		set_listeners = {}, -- {[key]: Signal}
+		write_listeners = {}, -- {[key]: Signal}
+		changed_listeners = Signal.New(),
 		
 	}, Replica)
 	
@@ -292,7 +258,7 @@ function Replica.RequestData()
 	
 end
 	
-function Replica.OnNew(token: string, listener: (replica: Replica) -> ()): Connection
+function Replica.OnNew(token: string, listener: (replica: Replica) -> ()): Signal.Connection
 	
 	if type(token) ~= "string" then
 		error(`[{script.Name}]: "token" must be a string`)
@@ -301,18 +267,33 @@ function Replica.OnNew(token: string, listener: (replica: Replica) -> ()): Conne
 	local listeners = NewReplicaListeners[token]
 	
 	if listeners == nil then
-		listeners = {}
+		listeners = Signal.New()
 		NewReplicaListeners[token] = listeners
 	end
 	
 	local existing_replicas = TokenReplicas[token]
 	
-	local connection = ConnectionNew(listeners, listener)
+	local connection = listeners:Connect(listener)
 	
 	if existing_replicas ~= nil then
+
+		local announce = {}
 		for replica in pairs(existing_replicas) do
-			ConnectionFire(connection, replica)
+			announce[replica] = true
 		end
+
+		task.defer(function()
+			for replica in pairs(announce) do
+				if connection.IsConnected ~= true then
+					break
+				end
+				if not FreeRunnerThread then
+					FreeRunnerThread = coroutine.create(RunEventHandlerInFreeThread)
+				end
+				task.spawn(FreeRunnerThread, listener, replica)
+			end
+		end)
+
 	end
 	
 	return connection
@@ -332,29 +313,29 @@ function Replica.Test()
 	}
 end
 
-function Replica:OnSet(path: {}, listener: () -> ()): Connection
+function Replica:OnSet(path: {}, listener: () -> ()): Signal.Connection
 	local path_key = table.concat(path, ".")
 	local listeners = self.set_listeners[path_key]
 	if listeners == nil then
-		listeners = {}
+		listeners = Signal.New()
 		self.set_listeners[path_key] = listeners
 	end
 	
-	return ConnectionNew(listeners, listener)
+	return listeners:Connect(listener)
 end
 
-function Replica:OnWrite(function_name: string, listener: (...any) -> ()): Connection
+function Replica:OnWrite(function_name: string, listener: (...any) -> ()): Signal.Connection
 	local listeners = self.write_listeners[function_name]
 	if listeners == nil then
-		listeners = {}
+		listeners = Signal.New()
 		self.write_listeners[function_name] = listeners
 	end
 	
-	return ConnectionNew(listeners, listener)
+	return listeners:Connect(listener)
 end
 
-function Replica:OnChange(listener: (action: "Set" | "SetValues" | "TableInsert" | "TableRemove", path: {any}, param1: any, param2: any?) -> ()): Connection
-	return ConnectionNew(self.changed_listeners, listener)
+function Replica:OnChange(listener: (action: "Set" | "SetValues" | "TableInsert" | "TableRemove", path: {any}, param1: any, param2: any?) -> ()): Signal.Connection
+	return self.changed_listeners:Connect(listener)
 end
 
 function Replica:GetChild(token: string): Replica?
@@ -384,7 +365,7 @@ function Replica:Identify(): string
 		tag_string ..= `{if first_tag == true then "" else ";"}{tostring(key)}={tostring(value)}`
 		first_tag = false
 	end
-	return `[Id:{self.Id};Token:{self.Token};Tags:\{{tag_string}\}]`
+	return `[Id:{self.Id};Token:{self.Token};Tags:[{tag_string}]]`
 end
 
 function Replica:IsActive(): boolean
@@ -412,14 +393,10 @@ function Replica:Set(path: {string}, value: any)
 	if next(self.set_listeners) ~= nil then
 		local listeners = self.set_listeners[table.concat(path, ".")]
 		if listeners ~= nil then
-			for connection in pairs(listeners) do
-				ConnectionFire(connection, value, old_value)
-			end
+			listeners:Fire(value, old_value)
 		end
 	end
-	for connection in pairs(self.changed_listeners) do
-		ConnectionFire(connection, "Set", path, value, old_value)
-	end
+	self.changed_listeners:Fire("Set", path, value, old_value)
 	
 end
 
@@ -441,9 +418,7 @@ function Replica:SetValues(path: {string}, values: {[string]: any})
 	
 	-- Firing signals:
 
-	for connection in pairs(self.changed_listeners) do
-		ConnectionFire(connection, "SetValues", path, values)
-	end
+	self.changed_listeners:Fire("SetValues", path, values)
 	
 end
 
@@ -468,9 +443,7 @@ function Replica:TableInsert(path: {string}, value: any, index: number?): number
 	
 	-- Firing signals:
 
-	for connection in pairs(self.changed_listeners) do
-		ConnectionFire(connection, "TableInsert", path, value, index)
-	end
+	self.changed_listeners:Fire("TableInsert", path, value, index)
 	
 	return (index :: number)
 
@@ -492,9 +465,7 @@ function Replica:TableRemove(path: {string}, index: number): any
 	
 	-- Firing signals:
 
-	for connection in pairs(self.changed_listeners) do
-		ConnectionFire(connection, "TableRemove", path, removed_value, index)
-	end
+	self.changed_listeners:Fire("TableRemove", path, removed_value, index)
 	
 	return removed_value
 	
@@ -515,9 +486,7 @@ function Replica:Write(function_name: string, ...): ...any
 	
 	local listeners = self.write_listeners[function_name]
 	if listeners ~= nil then
-		for connection in pairs(listeners) do
-			ConnectionFire(connection, ...)
-		end
+		listeners:Fire(...)
 	end
 	
 	return table.unpack(return_params)
@@ -609,9 +578,7 @@ local function ReplicaFromBindBuffer(replica, announce_buffer)
 		for _, replica in ipairs(announce_buffer) do
 			local listeners = NewReplicaListeners[replica.Token]
 			if listeners ~= nil then
-				for connection in pairs(listeners) do
-					ConnectionFire(connection, replica)
-				end
+				listeners:Fire(replica)
 			end
 		end
 	end
@@ -696,7 +663,7 @@ local function BreadthCreationSort(creation: {}, root_id: number?, iterator: (Id
 		CreationScan(nested_creation, iterator, entry.Id)
 	end
 	
-	if #error_creation ~= 0 then -- An error occured while replicating a replica group.
+	if #error_creation ~= 0 then -- An error occurred while replicating a replica group.
 		
 		local msg = `[{script.Name}]: GROUP REPLICATION ERROR - Missing parents for:\n`
 		
@@ -709,7 +676,7 @@ local function BreadthCreationSort(creation: {}, root_id: number?, iterator: (Id
 				tag_string ..= `{if first_tag == true then "" else ";"}{tostring(key)}={tostring(value)}`
 				first_tag = false
 			end
-			msg ..= `[Id:{entry.Id};ParentId:{self_creation[4]};Token:{self_creation[1]};Tags:\{{tag_string}\}]\n`
+			msg ..= `[Id:{entry.Id};ParentId:{self_creation[4]};Token:{self_creation[1]};Tags:[{tag_string}]]\n`
 		end
 		
 		if #error_creation > 50 then
@@ -881,9 +848,7 @@ RemoteCreate.OnClientEvent:Connect(function(creation: {}, root_id: number?) -- (
 	for _, replica in ipairs(announce_buffer) do
 		local listeners = NewReplicaListeners[replica.Token]
 		if listeners ~= nil then
-			for connection in pairs(listeners) do
-				ConnectionFire(connection, replica)
-			end
+			listeners:Fire(replica)
 		end
 	end
 
