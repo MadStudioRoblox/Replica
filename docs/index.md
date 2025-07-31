@@ -10,8 +10,10 @@ and client can connect cleanup tasks for the moment of replica destruction, stat
 ``` luau linenums="1"
 local Replica = require(game.ServerScriptService.ReplicaServer)
 
+local Token = Replica.Token("GlobalData")
+
 local replica = Replica.New({
-    Token = Replica.Token("GlobalData"),
+    Token = Token,
     Data = { -- Passed table reference will be used
         Score = 0,
         Nested = {
