@@ -495,7 +495,7 @@ end
 
 local function DestroyReplica(replica, is_depth_call)
 	-- Scan children replicas:
-	for _, child in ipairs(replica.Children) do
+	for child in pairs(replica.Children) do
 		DestroyReplica(child, true)
 	end
 
